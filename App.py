@@ -1,15 +1,20 @@
-import google.generativeai as genai 
-import os
+import streamlit as st
+import google.generativeai as genai
+import time
 
-# RECOMMENDED: Use an environment variable instead of hardcoding
-# os.environ["GEMINI_API_KEY"] = "YOUR_NEW_KEY_HERE"
-genai.configure(api_key= st.secrets["GEMINI_API_KEY"])
+# Configure API key
+genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
-# Use a stable model version
+# Page config
+st.set_page_config(page_title="FHIR Agent", page_icon="🏗️")
+st.title("🏗️ FHIR Agent")
+st.caption("Ask me anything about FHIR!")
+
+# Initialize model
 model = genai.GenerativeModel(
     model_name='gemini-2.5-flash',
     system_instruction="""
-The "Master FHIR Architect" Agentic Prompt
+   The "Master FHIR Architect" Agentic Prompt
 Role: You are a Lead Interoperability Architect with 20+ years of experience in HL7 FHIR R4 and R5. You are an expert teacher who balances deep technical precision with clear, jargon-free explanations.
 
 Objective: Explain any Healthcare/FHIR topic provided by the user. You must think like a consultant: prioritize data integrity, clinical safety, and developer ease-of-use.
@@ -55,23 +60,84 @@ Provide a full, valid, copy-pasteable JSON instance based on the practical examp
     """
 )
 
-# start_chat handles the history logic for you automatically
-chat = model.start_chat(history=[])
+# ─── Session state setup ───────────────────────────────────────────
+if "chat" not in st.session_state:
+    st.session_state.chat = model.start_chat(history=[])
 
-print("Chat started! Type 'quit' to exit.")
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-while True:
-    user_input = input("You: ")
-    if user_input.lower() == "quit":
-        break
+if "message_count" not in st.session_state:
+    st.session_state.message_count = 0
 
-    try:
-        # This sends the message and updates chat.history automatically
-        response = chat.send_message(user_input)
-        print(f"\nAssistant: {response.text}\n")
-        
-    except Exception as e:
-        if "429" in str(e):
-            print("\n[!] Quota exceeded. Waiting 60 seconds before next try...")
-        else:
-            print(f"\n[!] An error occurred: {e}")
+if "last_message_time" not in st.session_state:
+    st.session_state.last_message_time = 0
+
+# ─── Sidebar with reset button & stats ────────────────────────────
+with st.sidebar:
+    st.header("⚙️ Controls")
+    if st.button("🔄 Reset Conversation"):
+        st.session_state.chat = model.start_chat(history=[])
+        st.session_state.messages = []
+        st.session_state.message_count = 0
+        st.session_state.last_message_time = 0
+        st.success("Conversation reset!")
+        st.rerun()
+
+    st.divider()
+    st.metric("Messages sent", st.session_state.message_count)
+    st.caption("Max 50 messages per session")
+    st.caption("Max 500 characters per message")
+
+# ─── Display chat history ──────────────────────────────────────────
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+
+# ─── Chat input ────────────────────────────────────────────────────
+if prompt := st.chat_input("Enter a system design topic..."):
+
+    # Guardrail 1 — Empty input check
+    if not prompt.strip():
+        st.warning("⚠️ Please enter a topic!")
+        st.stop()
+
+    # Guardrail 2 — Input length limit
+    if len(prompt) > 500:
+        st.warning(f"⚠️ Your message is {len(prompt)} characters. Please keep it under 500!")
+        st.stop()
+
+    # Guardrail 3 — Rate limiting (max 1 message per 3 seconds)
+    current_time = time.time()
+    time_since_last = current_time - st.session_state.last_message_time
+    if time_since_last < 3:
+        st.warning(f"⚠️ Slow down! Please wait {3 - int(time_since_last)} seconds before sending again.")
+        st.stop()
+
+    # Guardrail 4 — Max messages per session
+    if st.session_state.message_count >= 50:
+        st.error("⚠️ You've reached the 50 message limit. Please reset the conversation!")
+        st.stop()
+
+    # Update tracking
+    st.session_state.last_message_time = current_time
+    st.session_state.message_count += 1
+
+    # Show user message
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
+
+    # Get response
+    with st.chat_message("assistant"):
+        with st.spinner("Thinking..."):
+            try:
+                response = st.session_state.chat.send_message(prompt)
+                reply = response.text
+                st.markdown(reply)
+                st.session_state.messages.append({"role": "assistant", "content": reply})
+            except Exception as e:
+                if "429" in str(e):
+                    st.error("⚠️ Quota exceeded. Please wait a moment and try again.")
+                else:
+                    st.error(f"⚠️ An error occurred: {e}")
