@@ -510,46 +510,50 @@ for msg in st.session_state.messages:
             <div class="chat-bubble-assistant">{msg["content"]}</div>
             """, unsafe_allow_html=True)
 
-# ── Chat input & guardrails ──────────────────────────────────────────────────────
-if st.session_state.message_count >= MAX_MESSAGES:
-    st.markdown("""
-    <div style="background:#FCEBEB;border:1px solid #F7C1C1;border-radius:12px;
-                padding:1rem 1.5rem;text-align:center;color:#A32D2D;font-weight:600;">
-        🚫 Session limit reached (50 messages). Please reset the conversation.
-    </div>
-    """, unsafe_allow_html=True)
+# ─── Chat input ────────────────────────────────────────────────────
+if prompt := st.chat_input("Enter any product management or healthcare topic..."):
 
-else:
-    prompt = st.chat_input(
-        "Ask Preetham anything about Agile, SAFe, Kanban, Healthcare...",
-        max_chars=MAX_CHARS,
-    )
+    # Guardrail 1 — Empty input check
+    if not prompt.strip():
+        st.warning("⚠️ Please enter a topic!")
+        st.stop()
 
-    if prompt:
-        # Rate limiting — 2 seconds between messages
-        now = time.time()
-        if now - st.session_state.last_message_time < 2:
-            st.warning("⏳ Please wait a moment before sending another message.")
-        else:
-            st.session_state.last_message_time = now
-            st.session_state.message_count    += 1
+    # Guardrail 2 — Input length limit
+    if len(prompt) > 500:
+        st.warning(f"⚠️ Your message is {len(prompt)} characters. Please keep it under 500!")
+        st.stop()
 
-            # Add user message
-            st.session_state.messages.append({"role": "user", "content": prompt})
+    # Guardrail 3 — Rate limiting (max 1 message per 3 seconds)
+    current_time = time.time()
+    time_since_last = current_time - st.session_state.last_message_time
+    if time_since_last < 3:
+        st.warning(f"⚠️ Slow down! Please wait {3 - int(time_since_last)} seconds before sending again.")
+        st.stop()
 
-            # ── Plug in your model here ──────────────────────────────────────
-            # Replace this block with your actual model call, e.g.:
-            #   response = model.generate_content(prompt)
-            #   reply = response.text
-            # ────────────────────────────────────────────────────────────────
-            with st.spinner("🎯 Preetham is thinking..."):
-                time.sleep(1)   # remove this line when using a real model
-                reply = (
-                    f"**[Connect your model here]**\n\n"
-                    f"You asked: _{prompt}_\n\n"
-                    f"Wire up your Gemini / OpenAI / Anthropic model "
-                    f"and replace this placeholder response."
-                )
+    # Guardrail 4 — Max messages per session
+    if st.session_state.message_count >= 50:
+        st.error("⚠️ You've reached the 50 message limit. Please reset the conversation!")
+        st.stop()
 
-            st.session_state.messages.append({"role": "assistant", "content": reply})
-            st.rerun()
+    # Update tracking
+    st.session_state.last_message_time = current_time
+    st.session_state.message_count += 1
+
+    # Show user message
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
+
+    # Get response
+    with st.chat_message("assistant"):
+        with st.spinner("Thinking..."):
+            try:
+                response = st.session_state.chat.send_message(prompt)
+                reply = response.text
+                st.markdown(reply)
+                st.session_state.messages.append({"role": "assistant", "content": reply})
+            except Exception as e:
+                if "429" in str(e):
+                    st.error("⚠️ Quota exceeded. Please wait a moment and try again.")
+                else:
+                    st.error(f"⚠️ An error occurred: {e}")
