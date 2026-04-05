@@ -95,7 +95,7 @@ for message in st.session_state.messages:
         st.markdown(message["content"])
 
 # ─── Chat input ────────────────────────────────────────────────────
-if prompt := st.chat_input("Enter a system design topic..."):
+if prompt := st.chat_input("Enter any FHIR topic..."):
 
     # Guardrail 1 — Empty input check
     if not prompt.strip():
